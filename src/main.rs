@@ -82,7 +82,7 @@ struct Claims {
     iat: usize,
     iss: String,
     #[serde(flatten)]
-    claims: HashMap<String, Value>,
+    extra: HashMap<String, Value>,
 }
 
 ///
@@ -99,13 +99,35 @@ struct AuthRequest {
 ///
 /// Generated JSON web token with optional scope.
 ///
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct AuthResponse {
     token_type: String,
     access_token: String,
     expires_in: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     scope: Option<String>,
+}
+
+///
+/// A JSON Web Key.
+///
+#[derive(Debug, Serialize, Deserialize)]
+struct Jwk {
+    alg: String,
+    kty: String,
+    #[serde(rename = "use")]
+    use_: String,
+    n: String,
+    e: String,
+    kid: String,
+}
+
+///
+/// List of JSON Web Keys.
+///
+#[derive(Debug, Serialize, Deserialize)]
+struct Jwks {
+    keys: Vec<Jwk>,
 }
 
 fn authenticate_user(username: &str, password: &str) -> Result<Option<User>, Error> {
@@ -151,7 +173,7 @@ async fn post_tokens(form: web::Form<AuthRequest>) -> TokensResult {
                     exp: expires_at.as_secs() as usize,
                     iat: since_the_epoch.as_secs() as usize,
                     iss: ISSUER_URI.clone(),
-                    claims: user.claims,
+                    extra: user.claims,
                 };
                 let mut header = Header::new(Algorithm::RS256);
                 header.kid = Some(APP_STATE.kid.clone());
@@ -179,28 +201,36 @@ async fn post_tokens(form: web::Form<AuthRequest>) -> TokensResult {
     }
 }
 
+const URL_SAFE_ENGINE: base64::engine::fast_portable::FastPortable =
+    base64::engine::fast_portable::FastPortable::from(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::fast_portable::NO_PAD,
+    );
+
 ///
 /// OpenID JSON web key set (RFC 7517)
 ///
 #[get("/.well-known/jwks.json")]
 async fn jwks_json() -> impl Responder {
     use rsa::PublicKeyParts;
-    let e = base64::encode(APP_STATE.pub_key.e().to_bytes_le());
-    let n = base64::encode(APP_STATE.pub_key.n().to_bytes_le());
+    // JWKS integers are big-endian and base64-url encoded
+    let e = base64::encode_engine(APP_STATE.pub_key.e().to_bytes_be(), &URL_SAFE_ENGINE);
+    let n = base64::encode_engine(APP_STATE.pub_key.n().to_bytes_be(), &URL_SAFE_ENGINE);
     let kid = APP_STATE.kid.clone();
-    let keys = serde_json::json!({
-        "keys": [
-            {
-                "alg": "RS256",
-                "kty": "RSA",
-                "use": "sig",
-                "n": n,
-                "e": e,
-                "kid": kid
-            }
-        ]
-    });
-    HttpResponse::Ok().body(keys.to_string())
+    let keys = Jwks {
+        keys: vec![Jwk {
+            alg: "RS256".into(),
+            kty: "RSA".into(),
+            use_: "sig".into(),
+            n,
+            e,
+            kid,
+        }],
+    };
+    HttpResponse::Ok().body(
+        serde_json::to_string(&keys)
+            .unwrap_or_else(|err| format!("serialization error: {:?}", err)),
+    )
 }
 
 #[get("/status")]
@@ -260,6 +290,7 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use actix_web::{http, http::header::ContentType, test};
+    use jsonwebtoken::{decode, DecodingKey, Validation};
 
     #[actix_web::test]
     async fn test_index_ok() {
@@ -291,16 +322,15 @@ mod tests {
 
     #[actix_web::test]
     async fn test_jwks_json_ok() {
-        let app = test::init_service(App::new().service(jwks_json)).await;
+        let mut app = test::init_service(App::new().service(jwks_json)).await;
         let req = test::TestRequest::get()
             .uri("/.well-known/jwks.json")
             .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        // too lazy to define a struct and use call_and_read_body_json()
-        let body = resp.into_body();
-        let chars = format!("{:?}", body);
-        assert!(chars.contains("RS256"));
+        let key_set: Jwks = test::call_and_read_body_json(&mut app, req).await;
+        let key = &key_set.keys[0];
+        assert_eq!(key.kty, "RSA");
+        assert_eq!(key.alg, "RS256");
+        assert_eq!(key.use_, "sig");
     }
 
     #[actix_web::test]
@@ -318,18 +348,47 @@ mod tests {
 
     #[actix_web::test]
     async fn test_post_tokens_ok() {
-        let app = test::init_service(App::new().service(post_tokens)).await;
+        let mut app = test::init_service(App::new().service(post_tokens)).await;
         let payload = r#"grant_type=password&username=johndoe&password=tiger2"#.as_bytes();
         let req = test::TestRequest::post()
             .uri("/tokens")
             .insert_header(ContentType::form_url_encoded())
             .set_payload(payload)
             .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        // too lazy to define a struct and use call_and_read_body_json()
-        let body = resp.into_body();
-        let chars = format!("{:?}", body);
-        assert!(chars.contains("access_token"));
+        let token: AuthResponse = test::call_and_read_body_json(&mut app, req).await;
+        assert_eq!(token.token_type, "bearer");
+    }
+
+    #[actix_web::test]
+    async fn test_validate_ok() {
+        let mut app = test::init_service(App::new().service(jwks_json).service(post_tokens)).await;
+        // acquire an access token
+        let payload = r#"grant_type=password&username=johndoe&password=tiger2"#.as_bytes();
+        let req = test::TestRequest::post()
+            .uri("/tokens")
+            .insert_header(ContentType::form_url_encoded())
+            .set_payload(payload)
+            .to_request();
+        let token: AuthResponse = test::call_and_read_body_json(&mut app, req).await;
+        assert_eq!(token.token_type, "bearer");
+        // fetch the key set
+        let req = test::TestRequest::get()
+            .uri("/.well-known/jwks.json")
+            .to_request();
+        let key_set: Jwks = test::call_and_read_body_json(&mut app, req).await;
+        // validate using the (assumed) one key
+        let jwk = &key_set.keys[0];
+        println!("n: {}", jwk.n);
+        let decoder = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).unwrap();
+        let token = decode::<Claims>(
+            &token.access_token,
+            &decoder,
+            &Validation::new(Algorithm::RS256),
+        )
+        .unwrap();
+        assert_eq!(token.claims.sub, "johndoe");
+        let purpose = token.claims.extra.get("purpose");
+        let expected = Value::String("read".into());
+        assert_eq!(purpose, Some(&expected));
     }
 }
