@@ -13,6 +13,8 @@ use rsa::{
     pkcs8::{EncodePrivateKey, LineEnding},
     RsaPrivateKey, RsaPublicKey,
 };
+use rustls::{Certificate, PrivateKey, ServerConfig};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,6 +22,7 @@ use std::{
     env, fs,
     time::{Duration, SystemTime},
 };
+use std::{fs::File, io::BufReader};
 
 struct AppState {
     pub_key: RsaPublicKey,
@@ -48,7 +51,7 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| {
 });
 
 static ISSUER_URI: Lazy<String> =
-    Lazy::new(|| env::var("BASE_URI").unwrap_or_else(|_| "http://127.0.0.1:3000".to_owned()));
+    Lazy::new(|| env::var("BASE_URI").unwrap_or_else(|_| "https://127.0.0.1:3000".to_owned()));
 
 ///
 /// A single entity as read from the USERS_FILE (users.json) file.
@@ -121,7 +124,8 @@ impl Responder for AuthResponse {
     type Body = BoxBody;
 
     fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
-        let body = serde_json::to_string(&self).unwrap();
+        let body = serde_json::to_string(&self)
+            .unwrap_or_else(|err| format!("serialization error: {:?}", err));
         HttpResponse::Ok()
             .content_type(ContentType::json())
             .body(body)
@@ -204,14 +208,36 @@ async fn app_status() -> impl Responder {
     HttpResponse::Ok()
 }
 
+fn load_rustls_config() -> Result<rustls::ServerConfig, Error> {
+    let config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth();
+    let cert_path = env::var("CERT_FILE").unwrap_or_else(|_| "certs/cert.pem".to_owned());
+    let key_path = env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_owned());
+    let cert_file = &mut BufReader::new(File::open(cert_path)?);
+    let key_file = &mut BufReader::new(File::open(key_path)?);
+    let cert_chain = certs(cert_file)?.into_iter().map(Certificate).collect();
+    let mut keys: Vec<PrivateKey> = pkcs8_private_keys(key_file)?
+        .into_iter()
+        .map(PrivateKey)
+        .collect();
+    if keys.is_empty() {
+        eprintln!("error: could not find PKCS 8 private keys");
+        std::process::exit(1);
+    }
+    Ok(config.with_single_cert(cert_chain, keys.remove(0))?)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
+    let rustls_config =
+        load_rustls_config().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_owned());
     let addr = format!("{}:{}", host, port);
-    info!("listening on http://{}/...", addr);
+    info!("listening on https://{}/...", addr);
     HttpServer::new(|| {
         App::new()
             .wrap(middleware::Logger::default())
@@ -225,7 +251,7 @@ async fn main() -> std::io::Result<()> {
                     .index_file("index.html"),
             )
     })
-    .bind(addr)?
+    .bind_rustls(addr, rustls_config)?
     .run()
     .await
 }
