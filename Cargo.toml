@@ -1,0 +1,30 @@
+[package]
+name = "jwt-test-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["Nathan Fiedler <nathanfiedler@fastmail.fm>"]
+description = "Produce JSON Web Token and expose JWKS."
+repository = "https://github.com/nlfiedler/jwt-test-server"
+readme = "README.md"
+keywords = ["jwt", "jwks"]
+license = "MIT"
+exclude = [
+    "TODO.org",
+    "test/*",
+]
+
+[dependencies]
+actix-files = "0.6.2"
+actix-web = "4.2.1"
+anyhow = "1.0.68"
+base64 = "0.20.0"
+dotenv = "0.15.0"
+env_logger = "0.10.0"
+jsonwebtoken = "8.2.0"
+log = "0.4.17"
+once_cell = "1.17.0"
+rand = "0.8.5"
+rsa = "0.7.2"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.91"
+uuid = { version = "1.2.2", features = ["v4"] }

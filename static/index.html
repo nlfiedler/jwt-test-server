@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>JWT generator</title>
+</head>
+
+<body>
+    <p>Enter credentials and submit to get a JSON web token.</p>
+    <form method="post" action="/tokens">
+        <p>
+            <label for="username"><strong>Username:</strong></label>
+            <input type="text" name="username" placeholder="Enter Username" required />
+        </p>
+        <p>
+            <label for="password"><strong>Password:</strong></label>
+            <input type="password" name="password" required />
+        </p>
+        <input type="hidden" name="grant_type" value="password" />
+        <input type="submit" value="Generate" />
+    </form>
+    <p>
+        <a href="/.well-known/jwks.json">JWK set</a>
+    </p>
+</body>
+
+</html>
