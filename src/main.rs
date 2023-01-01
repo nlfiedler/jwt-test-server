@@ -378,7 +378,6 @@ mod tests {
         let key_set: Jwks = test::call_and_read_body_json(&mut app, req).await;
         // validate using the (assumed) one key
         let jwk = &key_set.keys[0];
-        println!("n: {}", jwk.n);
         let decoder = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).unwrap();
         let token = decode::<Claims>(
             &token.access_token,
