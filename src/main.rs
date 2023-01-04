@@ -9,20 +9,18 @@ use anyhow::Error;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use log::{error, info};
 use once_cell::sync::Lazy;
-use rsa::{
-    pkcs8::{EncodePrivateKey, LineEnding},
-    RsaPrivateKey, RsaPublicKey,
-};
+use rsa::{pkcs8::DecodePrivateKey, RsaPrivateKey, RsaPublicKey};
 use rustls::{Certificate, PrivateKey, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::{
-    env, fs,
+    collections::HashMap,
+    env,
+    fs::{self, File},
+    io::BufReader,
     time::{Duration, SystemTime},
 };
-use std::{fs::File, io::BufReader};
 
 struct AppState {
     pub_key: RsaPublicKey,
@@ -31,17 +29,14 @@ struct AppState {
 }
 
 static APP_STATE: Lazy<AppState> = Lazy::new(|| {
-    let mut rng = rand::thread_rng();
-    // n.b. more bits, lazy startup takes longer, and 2048 is already several seconds
-    let bits = 2048;
-    let priv_key = RsaPrivateKey::new(&mut rng, bits).expect("failed to generate private key");
+    // build an encoding key from the private key
+    let key_path = env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_owned());
+    let key_pem = fs::read(&key_path).expect("failed to read key");
+    let encoder = EncodingKey::from_rsa_pem(&key_pem).expect("failed to create encoding key");
+    // extract the public certificate for serving via JWKS
+    let key_pem_str = std::str::from_utf8(&key_pem).expect("failed to convert key bytes");
+    let priv_key = RsaPrivateKey::from_pkcs8_pem(&key_pem_str).expect("failed to parse key");
     let pub_key = RsaPublicKey::from(&priv_key);
-    // ideally EncodingKey would have a "from_rsa_raw_components()"
-    let pem = priv_key
-        .to_pkcs8_pem(LineEnding::LF)
-        .expect("failed to convert to PEM")
-        .to_string();
-    let encoder = EncodingKey::from_rsa_pem(pem.as_bytes()).expect("failed to create encoding key");
     let kid = uuid::Uuid::new_v4().to_string();
     AppState {
         pub_key,
@@ -93,19 +88,16 @@ struct AuthRequest {
     grant_type: String,
     username: String,
     password: String,
-    scope: Option<String>,
 }
 
 ///
-/// Generated JSON web token with optional scope.
+/// Generated access token with expiration in seconds.
 ///
 #[derive(Deserialize, Serialize)]
 struct AuthResponse {
     token_type: String,
     access_token: String,
     expires_in: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scope: Option<String>,
 }
 
 ///
@@ -182,7 +174,6 @@ async fn post_tokens(form: web::Form<AuthRequest>) -> TokensResult {
                         token_type: "bearer".into(),
                         access_token: token,
                         expires_in: 3600,
-                        scope: form.scope.clone(),
                     }),
                     Err(err) => {
                         error!("failed to generate token: {:?}", err);

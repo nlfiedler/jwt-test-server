@@ -17,7 +17,8 @@
 *** DONE doc: setting cert and key paths
 *** DONE add test that validates token against server
 *** DONE doc: how to validate the token
-*** TODO doc: add curl example of getting token
+*** DONE use the certs instead of the generated key pair
+*** DONE doc: add curl example of getting token
 ** Docker deployment
 *** TODO write README
 *** TODO publish

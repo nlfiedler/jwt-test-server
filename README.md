@@ -14,7 +14,13 @@ The authorization flow follows that of _Resource Owner Password Credentials Gran
 
 ### Browser
 
-Open the default web page in a browser, https://127.0.0.1:3000, and enter credentials matching those defined in the `users.json` file. The response body will contain JSON web token in JSON format.
+Open the default web page in a browser, https://127.0.0.1:3000, and enter credentials matching those defined in the `users.json` file. The response body will contain the access token and other information in JSON format.
+
+### Curl
+
+```shell
+curl -X POST -d grant_type=password -d username=janedoe -d password=tiger1 https://127.0.0.1:3000/tokens
+```
 
 ### PowerShell
 
@@ -40,7 +46,7 @@ To modify the configuration, set any of the environment variables shown in the t
 | ---- | ----------- | ------------- |
 | `HOST` | address on which to bind | `127.0.0.1` |
 | `PORT` | port on which to listen | `3000` |
-| `RUST_LOG` | logging level such as `debug` or `info` | `error` (see https://docs.rs/env_logger/latest/env_logger/) |
+| `RUST_LOG` | logging level such as `debug` or `info` | `error` (see [env_logger](https://docs.rs/env_logger/latest/env_logger/)) |
 | `BASE_URI` | value for the `iss` field in the token | `https://127.0.0.1:3000` |
 | `USERS_FILE` | path of JSON-formatted file with list of valid users | `users.json` |
 | `CERT_FILE` | path of PEM-encoded file containing public certificate | `certs/cert.pem` |
