@@ -3,9 +3,9 @@
 #
 # Build:
 #
-# $ docker build --pull -t jwt-test-server:latest -t jwt-test-server:0.1 -f docker/Dockerfile .
+# $ docker build --pull -t jwt-test-server:latest -t jwt-test-server:0.2 -f docker/Dockerfile .
 # $ docker tag jwt-test-server:latest nlfiedler/jwt-test-server:latest
-# $ docker tag jwt-test-server:0.1 nlfiedler/jwt-test-server:0.1
+# $ docker tag jwt-test-server:0.2 nlfiedler/jwt-test-server:0.2
 # $ docker push --all-tags nlfiedler/jwt-test-server
 #
 # Run:

@@ -46,6 +46,7 @@ To modify the configuration, set any of the environment variables shown in the t
 | ---- | ----------- | ------------- |
 | `HOST` | address on which to bind | `127.0.0.1` |
 | `PORT` | port on which to listen | `3000` |
+| `PROTOCOL` | specify whether to use HTTP or HTTPS | `https` |
 | `RUST_LOG` | logging level such as `debug` or `info` | `error` (see [env_logger](https://docs.rs/env_logger/latest/env_logger/)) |
 | `BASE_URI` | value for the `iss` field in the token | `https://127.0.0.1:3000` |
 | `USERS_FILE` | path of JSON-formatted file with list of valid users | `users.json` |

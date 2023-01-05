@@ -253,28 +253,49 @@ fn load_rustls_config() -> Result<rustls::ServerConfig, Error> {
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
-    let rustls_config =
-        load_rustls_config().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_owned());
     let addr = format!("{}:{}", host, port);
-    info!("listening on https://{}/...", addr);
-    HttpServer::new(|| {
-        App::new()
-            .wrap(middleware::Logger::default())
-            .service(post_tokens)
-            .service(jwks_json)
-            .service(app_status)
-            .service(
-                actix_files::Files::new("/", "static")
-                    .use_etag(true)
-                    .use_last_modified(true)
-                    .index_file("index.html"),
-            )
-    })
-    .bind_rustls(addr, rustls_config)?
-    .run()
-    .await
+    let protocol = env::var("PROTOCOL").unwrap_or_else(|_| "https".to_owned());
+    if protocol == "https" {
+        let rustls_config =
+            load_rustls_config().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        info!("listening on https://{}/...", addr);
+        HttpServer::new(|| {
+            App::new()
+                .wrap(middleware::Logger::default())
+                .service(post_tokens)
+                .service(jwks_json)
+                .service(app_status)
+                .service(
+                    actix_files::Files::new("/", "static")
+                        .use_etag(true)
+                        .use_last_modified(true)
+                        .index_file("index.html"),
+                )
+        })
+        .bind_rustls(addr, rustls_config)?
+        .run()
+        .await
+    } else {
+        info!("listening on http://{}/...", addr);
+        HttpServer::new(|| {
+            App::new()
+                .wrap(middleware::Logger::default())
+                .service(post_tokens)
+                .service(jwks_json)
+                .service(app_status)
+                .service(
+                    actix_files::Files::new("/", "static")
+                        .use_etag(true)
+                        .use_last_modified(true)
+                        .index_file("index.html"),
+                )
+        })
+        .bind(addr)?
+        .run()
+        .await
+    }
 }
 
 #[cfg(test)]
