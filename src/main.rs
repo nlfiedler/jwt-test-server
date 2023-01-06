@@ -249,6 +249,18 @@ fn load_rustls_config() -> Result<rustls::ServerConfig, Error> {
     Ok(config.with_single_cert(cert_chain, keys.remove(0))?)
 }
 
+fn config(cfg: &mut web::ServiceConfig) {
+    cfg.service(post_tokens)
+        .service(jwks_json)
+        .service(app_status)
+        .service(
+            actix_files::Files::new("/", "static")
+                .use_etag(true)
+                .use_last_modified(true)
+                .index_file("index.html"),
+        );
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
@@ -264,15 +276,7 @@ async fn main() -> std::io::Result<()> {
         HttpServer::new(|| {
             App::new()
                 .wrap(middleware::Logger::default())
-                .service(post_tokens)
-                .service(jwks_json)
-                .service(app_status)
-                .service(
-                    actix_files::Files::new("/", "static")
-                        .use_etag(true)
-                        .use_last_modified(true)
-                        .index_file("index.html"),
-                )
+                .configure(config)
         })
         .bind_rustls(addr, rustls_config)?
         .run()
@@ -282,15 +286,7 @@ async fn main() -> std::io::Result<()> {
         HttpServer::new(|| {
             App::new()
                 .wrap(middleware::Logger::default())
-                .service(post_tokens)
-                .service(jwks_json)
-                .service(app_status)
-                .service(
-                    actix_files::Files::new("/", "static")
-                        .use_etag(true)
-                        .use_last_modified(true)
-                        .index_file("index.html"),
-                )
+                .configure(config)
         })
         .bind(addr)?
         .run()
