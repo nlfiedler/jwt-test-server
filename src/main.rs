@@ -199,6 +199,29 @@ const URL_SAFE_ENGINE: base64::engine::fast_portable::FastPortable =
     );
 
 ///
+/// OpenID discovery endpoint
+///
+#[get("/.well-known/openid-configuration")]
+async fn openid_config() -> impl Responder {
+    use serde_json::json;
+    let issuer_uri = ISSUER_URI.to_string();
+    let jwks_uri = format!("{}/.well-known/jwks.json", issuer_uri.clone());
+    // authorization_endpoint should present a form
+    let auth_endp = format!("{}/tokens", issuer_uri.clone());
+    let configuration = json!({
+        "issuer": issuer_uri.clone(),
+        "jwks_uri": jwks_uri,
+        "authorization_endpoint": auth_endp,
+        "response_types_supported": ["code", "id_token", "token id_token"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"]
+    });
+    HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .body(configuration.to_string())
+}
+
+///
 /// OpenID JSON web key set (RFC 7517)
 ///
 #[get("/.well-known/jwks.json")]
@@ -218,7 +241,7 @@ async fn jwks_json() -> impl Responder {
             kid,
         }],
     };
-    HttpResponse::Ok().body(
+    HttpResponse::Ok().content_type(ContentType::json()).body(
         serde_json::to_string(&keys)
             .unwrap_or_else(|err| format!("serialization error: {:?}", err)),
     )
@@ -251,6 +274,7 @@ fn load_rustls_config() -> Result<rustls::ServerConfig, Error> {
 
 fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(post_tokens)
+        .service(openid_config)
         .service(jwks_json)
         .service(app_status)
         .service(
@@ -339,6 +363,21 @@ mod tests {
         assert_eq!(key.kty, "RSA");
         assert_eq!(key.alg, "RS256");
         assert_eq!(key.use_, "sig");
+    }
+
+    #[actix_web::test]
+    async fn test_openid_configuration_ok() {
+        let mut app = test::init_service(App::new().service(openid_config)).await;
+        let req = test::TestRequest::get()
+            .uri("/.well-known/openid-configuration")
+            .to_request();
+        let configuration: HashMap<String, Value> =
+            test::call_and_read_body_json(&mut app, req).await;
+        assert!(configuration.contains_key("jwks_uri"));
+        let option = configuration["id_token_signing_alg_values_supported"].as_array();
+        assert!(option.is_some());
+        let algorithms = option.unwrap();
+        assert_eq!(algorithms[0], "RS256");
     }
 
     #[actix_web::test]

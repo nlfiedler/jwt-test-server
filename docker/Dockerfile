@@ -10,7 +10,7 @@
 #
 # Run:
 #
-# $ docker run -d -p 3000:3000 --name jwt-test-server jwt-test-server:latest
+# $ docker run --restart unless-stopped -d -p 3000:3000 --name jwt-test-server jwt-test-server:latest
 #
 
 # build the server binary
@@ -33,5 +33,4 @@ COPY users.json users.json
 ENV HOST "0.0.0.0"
 ENV RUST_LOG info
 EXPOSE ${PORT}
-HEALTHCHECK CMD ./healthcheck
 ENTRYPOINT ["./jwt-test-server"]
