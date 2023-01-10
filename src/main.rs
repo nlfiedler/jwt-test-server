@@ -37,7 +37,16 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| {
     let key_pem_str = std::str::from_utf8(&key_pem).expect("failed to convert key bytes");
     let priv_key = RsaPrivateKey::from_pkcs8_pem(&key_pem_str).expect("failed to parse key");
     let pub_key = RsaPublicKey::from(&priv_key);
-    let kid = uuid::Uuid::new_v4().to_string();
+    // compute a key id based on the public key n/e values
+    use rsa::PublicKeyParts;
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    let modulus = pub_key.n().to_bytes_be();
+    hasher.update(modulus);
+    let public_exponent = pub_key.e().to_bytes_be();
+    hasher.update(public_exponent);
+    let digest = hasher.finalize();
+    let kid = format!("{:x}", digest);
     AppState {
         pub_key,
         encoder,
