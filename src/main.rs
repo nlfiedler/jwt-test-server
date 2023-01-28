@@ -6,6 +6,7 @@ use actix_web::{
     HttpResponse, HttpServer, Responder,
 };
 use anyhow::Error;
+use base64::{engine::general_purpose, Engine as _};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use log::{error, info};
 use once_cell::sync::Lazy;
@@ -201,12 +202,6 @@ async fn post_tokens(form: web::Form<AuthRequest>) -> TokensResult {
     }
 }
 
-const URL_SAFE_ENGINE: base64::engine::fast_portable::FastPortable =
-    base64::engine::fast_portable::FastPortable::from(
-        &base64::alphabet::URL_SAFE,
-        base64::engine::fast_portable::NO_PAD,
-    );
-
 ///
 /// OpenID discovery endpoint
 ///
@@ -236,9 +231,9 @@ async fn openid_config() -> impl Responder {
 #[get("/.well-known/jwks.json")]
 async fn jwks_json() -> impl Responder {
     use rsa::PublicKeyParts;
-    // JWKS integers are big-endian and base64-url encoded
-    let e = base64::encode_engine(APP_STATE.pub_key.e().to_bytes_be(), &URL_SAFE_ENGINE);
-    let n = base64::encode_engine(APP_STATE.pub_key.n().to_bytes_be(), &URL_SAFE_ENGINE);
+    // JWKS integers are big-endian and base64-url encoded w/o padding
+    let e = general_purpose::URL_SAFE_NO_PAD.encode(APP_STATE.pub_key.e().to_bytes_be());
+    let n = general_purpose::URL_SAFE_NO_PAD.encode(APP_STATE.pub_key.n().to_bytes_be());
     let kid = APP_STATE.kid.clone();
     let keys = Jwks {
         keys: vec![Jwk {
