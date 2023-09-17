@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2022 Nathan Fiedler
+// Copyright (c) 2023 Nathan Fiedler
 //
 use actix_web::{
     body::BoxBody, get, http::header::ContentType, middleware, post, web, App, Either, HttpRequest,
@@ -32,14 +32,14 @@ struct AppState {
 static APP_STATE: Lazy<AppState> = Lazy::new(|| {
     // build an encoding key from the private key
     let key_path = env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_owned());
-    let key_pem = fs::read(&key_path).expect("failed to read key");
+    let key_pem = fs::read(key_path).expect("failed to read key");
     let encoder = EncodingKey::from_rsa_pem(&key_pem).expect("failed to create encoding key");
     // extract the public certificate for serving via JWKS
     let key_pem_str = std::str::from_utf8(&key_pem).expect("failed to convert key bytes");
-    let priv_key = RsaPrivateKey::from_pkcs8_pem(&key_pem_str).expect("failed to parse key");
+    let priv_key = RsaPrivateKey::from_pkcs8_pem(key_pem_str).expect("failed to parse key");
     let pub_key = RsaPublicKey::from(&priv_key);
     // compute a key id based on the public key n/e values
-    use rsa::PublicKeyParts;
+    use rsa::traits::PublicKeyParts;
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     let modulus = pub_key.n().to_bytes_be();
@@ -230,7 +230,7 @@ async fn openid_config() -> impl Responder {
 ///
 #[get("/.well-known/jwks.json")]
 async fn jwks_json() -> impl Responder {
-    use rsa::PublicKeyParts;
+    use rsa::traits::PublicKeyParts;
     // JWKS integers are big-endian and base64-url encoded w/o padding
     let e = general_purpose::URL_SAFE_NO_PAD.encode(APP_STATE.pub_key.e().to_bytes_be());
     let n = general_purpose::URL_SAFE_NO_PAD.encode(APP_STATE.pub_key.n().to_bytes_be());
