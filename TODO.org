@@ -1,7 +1,5 @@
 * Action Items
 ** DONE update dependencies
-** TODO replace =hyper= with =reqwest= in example (see tanuki google geocode client)
-** TODO support dynamic configuration
+** DONE replace =hyper= with =reqwest= in example
 ** TODO support CRUD for users, stored persistently (SQLite?)
-*** give it the full Clean Architecture treatment
 ** TODO determine what other OpenID features are needed for standards compliance
