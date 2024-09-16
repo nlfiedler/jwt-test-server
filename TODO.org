@@ -1,5 +1,7 @@
 * Action Items
-** DONE update dependencies
-** DONE replace =hyper= with =reqwest= in example
-** TODO support CRUD for users, stored persistently (SQLite?)
-** TODO determine what other OpenID features are needed for standards compliance
+** TODO replace static web page with dynamic webui using [[https://leptos.dev][Leptos]]
+** TODO add a web-based administrative interface for managing users
+** Future additions
+*** determine what other OpenID features are needed for standards compliance
+*** write =ChangePassword= usecase for admin(?) to change user's pasword
+*** write =ReplaceClaims= usecase for admin to change user's claims

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 Nathan Fiedler
+// Copyright (c) 2024 Nathan Fiedler
 //
 use actix_web::{
     body::BoxBody, get, http::header::ContentType, middleware, post, web, App, Either, HttpRequest,
@@ -7,21 +7,32 @@ use actix_web::{
 };
 use anyhow::Error;
 use base64::{engine::general_purpose, Engine as _};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use log::{error, info};
-use once_cell::sync::Lazy;
+use jsonwebtoken::EncodingKey;
+use jwt_test_server::data::repositories::EntityRepositoryImpl;
+use jwt_test_server::data::sources::{build_data_source, DataSourceType};
+use jwt_test_server::domain::entities::{User, WebToken};
+use jwt_test_server::domain::repositories::EntityRepository;
+use log::{error, info, warn};
 use rsa::{pkcs8::DecodePrivateKey, RsaPrivateKey, RsaPublicKey};
 use rustls::{Certificate, PrivateKey, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    env,
-    fs::{self, File},
-    io::BufReader,
-    time::{Duration, SystemTime},
-};
+use std::collections::HashMap;
+use std::env;
+use std::fs::{self, File};
+use std::io::BufReader;
+use std::sync::{Arc, LazyLock};
+
+///
+/// The shared entity repository instance.
+///
+static ENTITY_REPO: LazyLock<Arc<EntityRepositoryImpl>> = LazyLock::new(|| {
+    let db_path = env::var("DB_PATH").unwrap_or_else(|_| "users.db3".to_owned());
+    let data_source = build_data_source(DataSourceType::SqliteFile(db_path))
+        .expect("error: could not build data source");
+    Arc::new(EntityRepositoryImpl::new(data_source))
+});
 
 struct AppState {
     pub_key: RsaPublicKey,
@@ -29,7 +40,7 @@ struct AppState {
     kid: String,
 }
 
-static APP_STATE: Lazy<AppState> = Lazy::new(|| {
+static APP_STATE: LazyLock<AppState> = LazyLock::new(|| {
     // build an encoding key from the private key
     let key_path = env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_owned());
     let key_pem = fs::read(key_path).expect("failed to read key");
@@ -55,14 +66,14 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| {
     }
 });
 
-static ISSUER_URI: Lazy<String> =
-    Lazy::new(|| env::var("BASE_URI").unwrap_or_else(|_| "https://127.0.0.1:3000".to_owned()));
+static ISSUER_URI: LazyLock<String> =
+    LazyLock::new(|| env::var("BASE_URI").unwrap_or_else(|_| "https://127.0.0.1:3000".to_owned()));
 
 ///
-/// A single entity as read from the USERS_FILE (users.json) file.
+/// A single entity as read from the configuration file.
 ///
 #[derive(Debug, Serialize, Deserialize)]
-struct User {
+struct ConfiguredUser {
     username: String,
     password: String,
     #[serde(flatten)]
@@ -70,11 +81,11 @@ struct User {
 }
 
 ///
-/// Full results from deserializing the USERS_FILE (users.json) file.
+/// Full results from deserializing the configuration file.
 ///
 #[derive(Debug, Serialize, Deserialize)]
-struct Users {
-    users: Vec<User>,
+struct ConfiguredUsers {
+    users: Vec<ConfiguredUser>,
 }
 
 ///
@@ -132,16 +143,54 @@ struct Jwks {
     keys: Vec<Jwk>,
 }
 
-fn authenticate_user(username: &str, password: &str) -> Result<Option<User>, Error> {
+fn prime_user_database() -> anyhow::Result<()> {
+    use jwt_test_server::domain::usecases::create_user::{CreateUser, Params};
+    use jwt_test_server::domain::usecases::UseCase;
+    let repo: Arc<dyn EntityRepository> = ENTITY_REPO.clone();
+    let usecase = CreateUser::new(repo);
     let user_file = env::var("USERS_FILE").unwrap_or_else(|_| "users.json".to_owned());
-    let user_data = fs::File::open(user_file)?;
-    let user_list: Users = serde_json::from_reader(&user_data)?;
-    for user in user_list.users {
-        if user.username == username && user.password == password {
-            return Ok(Some(user));
+    match fs::File::open(&user_file) {
+        Ok(user_data) => {
+            let user_list: ConfiguredUsers = serde_json::from_reader(&user_data)?;
+            for user in user_list.users {
+                let params = Params {
+                    username: user.username,
+                    password: user.password,
+                    claims: user.claims,
+                };
+                usecase.call(params)?;
+            }
         }
+        Err(err) => warn!("could not read {}: {}", user_file, err),
     }
-    Ok(None)
+    Ok(())
+}
+
+fn authenticate_user(username: &str, password: &str) -> Result<User, Error> {
+    use jwt_test_server::domain::usecases::authenticate_user::{AuthenticateUser, Params};
+    use jwt_test_server::domain::usecases::UseCase;
+    let repo: Arc<dyn EntityRepository> = ENTITY_REPO.clone();
+    let usecase = AuthenticateUser::new(repo);
+    let params = Params {
+        username: username.to_owned(),
+        password: password.to_owned(),
+    };
+    usecase.call(params)
+}
+
+fn generate_token(user: User) -> Result<WebToken, Error> {
+    use jwt_test_server::domain::usecases::generate_token::{GenerateToken, Params};
+    use jwt_test_server::domain::usecases::UseCase;
+    let usecase = GenerateToken::new();
+    let params = Params {
+        subject: user.username,
+        claims: user.claims,
+        encoder: APP_STATE.encoder.clone(),
+        kid: APP_STATE.kid.clone(),
+        issuer: ISSUER_URI.clone(),
+        expires_in: 3600,
+    };
+    usecase.call(params)
 }
 
 impl Responder for AuthResponse {
@@ -165,38 +214,22 @@ async fn post_tokens(form: web::Form<AuthRequest>) -> TokensResult {
         Either::Right(HttpResponse::BadRequest().body("grant_type invalid"))
     } else {
         match authenticate_user(&form.username, &form.password) {
-            Ok(Some(user)) => {
-                let since_the_epoch = SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("time went backwards");
-                let expires_at = since_the_epoch + Duration::from_secs(3600);
-                let my_claims = Claims {
-                    sub: user.username,
-                    exp: expires_at.as_secs() as usize,
-                    iat: since_the_epoch.as_secs() as usize,
-                    iss: ISSUER_URI.clone(),
-                    extra: user.claims,
-                };
-                let mut header = Header::new(Algorithm::RS256);
-                header.kid = Some(APP_STATE.kid.clone());
-                match encode(&header, &my_claims, &APP_STATE.encoder) {
-                    Ok(token) => Either::Left(AuthResponse {
-                        token_type: "bearer".into(),
-                        access_token: token,
-                        expires_in: 3600,
-                    }),
-                    Err(err) => {
-                        error!("failed to generate token: {:?}", err);
-                        Either::Right(
-                            HttpResponse::InternalServerError().body("error generating token"),
-                        )
-                    }
+            Ok(user) => match generate_token(user) {
+                Ok(token) => Either::Left(AuthResponse {
+                    token_type: token.token_type,
+                    access_token: token.access_token,
+                    expires_in: token.expires_in,
+                }),
+                Err(err) => {
+                    error!("failed to generate token: {:?}", err);
+                    Either::Right(
+                        HttpResponse::InternalServerError().body("error generating token"),
+                    )
                 }
-            }
-            Ok(None) => Either::Right(HttpResponse::Unauthorized().finish()),
+            },
             Err(err) => {
                 error!("failed to authenticate user: {:?}", err);
-                Either::Right(HttpResponse::InternalServerError().body("error authenticating user"))
+                Either::Right(HttpResponse::Unauthorized().finish())
             }
         }
     }
@@ -293,6 +326,7 @@ fn config(cfg: &mut web::ServiceConfig) {
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
+    prime_user_database().expect("error: could not prime database");
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_owned());
     let addr = format!("{}:{}", host, port);
@@ -433,7 +467,7 @@ mod tests {
         let token = decode::<Claims>(
             &token.access_token,
             &decoder,
-            &Validation::new(Algorithm::RS256),
+            &Validation::new(jsonwebtoken::Algorithm::RS256),
         )
         .unwrap();
         assert_eq!(token.claims.sub, "johndoe");
