@@ -1,6 +1,12 @@
 * Action Items
 ** TODO replace static web page with dynamic webui using [[https://leptos.dev][Leptos]]
+*** login screen with form that submits credentials to get JWT, shows JWT in text area, with copy button
+*** incorrect credentials should show error message on login screen
+*** ideally would show JWT formatted and syntax highlighted
+*** link to open well-known configuration in new tab
+** TODO use bulma (or material ui?) for styling the web ui
 ** TODO add a web-based administrative interface for managing users
+*** Leptos has complex examples such as TodoMVC and =todo_app_sqlite= that may be very useful
 ** Future additions
 *** determine what other OpenID features are needed for standards compliance
 *** write =ChangePassword= usecase for admin(?) to change user's pasword
